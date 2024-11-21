@@ -1,5 +1,5 @@
 const ExifReader = require('exifreader');
-const sharp = require('sharp'); // Make sure to install: npm install sharp
+const sharp = require('sharp'); 
 
 const DEFAULT_VALIDATION_CONFIG = {
   maxFileSizeInMB: 10,
@@ -268,6 +268,8 @@ const extractFileMetadata = async (file, config = DEFAULT_VALIDATION_CONFIG) => 
 
     // Last resort: use current time
     if (!metadata.createdAt) {
+      const tags2 = ExifReader.load(fileData);
+      console.log(tags2)
       metadata.createdAt = new Date();
       metadata.possibleCreationSources.push('current');
       
