@@ -31,58 +31,6 @@ const DEFAULT_VALIDATION_CONFIG = {
   ]
 };
 
-// Helper function to extract date from filename
-function extractDateFromFilename(filename) {
-  // Common patterns for phone cameras and Snapchat
-  const patterns = [
-    // Snapchat patterns
-    {
-      regex: /^Snapchat-(\d{4})(\d{2})(\d{2})[-_]?(\d{2})(\d{2})(\d{2})/i,
-      source: 'snapchat'
-    },
-    // iPhone patterns
-    {
-      regex: /^IMG[_-](\d{4})(\d{2})(\d{2})[_-]?(\d{2})(\d{2})(\d{2})/i,
-      source: 'phone_camera'
-    },
-    // Android patterns
-    {
-      regex: /^(\d{4})(\d{2})(\d{2})[_-]?(\d{2})(\d{2})(\d{2})/,
-      source: 'phone_camera'
-    },
-    // Alternative Android/Samsung pattern
-    {
-      regex: /^[Pp]hoto[_-](\d{4})-?(\d{2})-?(\d{2})[_-]?(\d{2})-?(\d{2})-?(\d{2})/,
-      source: 'phone_camera'
-    }
-  ];
-
-  for (const {regex, source} of patterns) {
-    const match = filename.match(regex);
-    if (match) {
-      try {
-        // match[1] through match[6] contain year, month, day, hour, minute, second
-        const date = new Date(
-          parseInt(match[1]), // year
-          parseInt(match[2]) - 1, // month (0-based)
-          parseInt(match[3]), // day
-          parseInt(match[4] || 0), // hour
-          parseInt(match[5] || 0), // minute
-          parseInt(match[6] || 0)  // second
-        );
-        
-        if (!isNaN(date.getTime())) {
-          return { date, source };
-        }
-      } catch (error) {
-        console.warn('Failed to parse date from filename:', filename, error);
-      }
-    }
-  }
-  
-  return null;
-}
-
 // Helper function to check if file extension is allowed
 const isAllowedExtension = (fileName, allowedExtensions) => {
   const fileExtension = fileName.slice(((fileName.lastIndexOf(".") - 1) >>> 0) + 2).toLowerCase();
@@ -194,8 +142,7 @@ const extractFileMetadata = async (file, config = DEFAULT_VALIDATION_CONFIG) => 
     validationErrors: [],
     validationWarnings: [],
     sourceApplication: null,
-    isOriginalPhoto: false,
-    dateSource: null  // New field to track where the date came from
+    isOriginalPhoto: false
   };
 
   try {
@@ -219,8 +166,7 @@ const extractFileMetadata = async (file, config = DEFAULT_VALIDATION_CONFIG) => 
     if (file.mimetype.startsWith('image/')) {
       try {
         const tags = ExifReader.load(fileData);
-        console.log(tags);
-        
+        console.log(tags)
         // Check for source application in EXIF data
         const softwareTags = [
           'Software',
@@ -275,10 +221,6 @@ const extractFileMetadata = async (file, config = DEFAULT_VALIDATION_CONFIG) => 
         }
 
         // Extract creation time from EXIF data
-        let dateSource = null;
-        let createdAt = null;
-
-        // First try EXIF data
         const dateFields = [
           'DateTimeOriginal',
           'CreateDate',
@@ -290,57 +232,17 @@ const extractFileMetadata = async (file, config = DEFAULT_VALIDATION_CONFIG) => 
           if (tags[field] && tags[field].description) {
             const parsedDate = new Date(tags[field].description);
             if (!isNaN(parsedDate.getTime())) {
-              createdAt = parsedDate;
-              dateSource = 'EXIF';
+              metadata.createdAt = parsedDate;
               metadata.possibleCreationSources.push('EXIF');
+
+              // Calculate rough quality score based on EXIF data
+              if (tags.Quality) {
+                metadata.qualityScore = parseInt(tags.Quality.description) / 100;
+              }
               break;
             }
           }
         }
-
-        // If no EXIF date, try filename
-        if (!createdAt) {
-          console.log(file.name)
-          const filenameInfo = extractDateFromFilename(file.name);
-          if (filenameInfo) {
-            createdAt = filenameInfo.date;
-            dateSource = 'filename';
-            metadata.possibleCreationSources.push(filenameInfo.source);
-            metadata.isOriginalPhoto = true; // Since we matched a known camera pattern
-            
-            // If it's from Snapchat, mark it specifically
-            if (filenameInfo.source === 'snapchat') {
-              metadata.sourceApplication = 'snapchat';
-            }
-          }
-        }
-
-        // Try file system dates if neither EXIF nor filename worked
-        if (!createdAt && file.lastModifiedDate) {
-          createdAt = new Date(file.lastModifiedDate);
-          dateSource = 'lastModifiedDate';
-          metadata.possibleCreationSources.push('lastModifiedDate');
-        }
-
-        // Last resort: use current time
-        if (!createdAt) {
-          createdAt = new Date();
-          dateSource = 'current';
-          metadata.possibleCreationSources.push('current');
-          
-          if (config.requireOriginalPhoto) {
-            metadata.validationErrors.push(
-              'Could not verify original photo creation time. Please upload original photos directly from your camera/phone.'
-            );
-          } else {
-            metadata.validationWarnings.push(
-              'Using current time as creation time - this may not reflect when the photo was actually taken'
-            );
-          }
-        }
-
-        metadata.createdAt = createdAt;
-        metadata.dateSource = dateSource;
 
         // Extract additional EXIF information
         if (tags.Make) metadata.cameraMake = tags.Make.description;
@@ -358,6 +260,30 @@ const extractFileMetadata = async (file, config = DEFAULT_VALIDATION_CONFIG) => 
       }
     }
 
+    // Try file system dates if EXIF not available
+    if (!metadata.createdAt && file.lastModifiedDate) {
+      metadata.createdAt = new Date(file.lastModifiedDate);
+      metadata.possibleCreationSources.push('lastModifiedDate');
+    }
+
+    // Last resort: use current time
+    if (!metadata.createdAt) {
+      const tags2 = ExifReader.load(fileData);
+      console.log(tags2)
+      metadata.createdAt = new Date();
+      metadata.possibleCreationSources.push('current');
+      
+      if (config.requireOriginalPhoto) {
+        metadata.validationErrors.push(
+          'Could not verify original photo creation time. Please upload original photos directly from your camera/phone.'
+        );
+      } else {
+        metadata.validationWarnings.push(
+          'Using current time as creation time - this may not reflect when the photo was actually taken'
+        );
+      }
+    }
+
     // If the image was compressed, add a warning
     if (wasCompressed) {
       metadata.validationWarnings.push(
@@ -370,7 +296,7 @@ const extractFileMetadata = async (file, config = DEFAULT_VALIDATION_CONFIG) => 
     console.error('Metadata extraction error:', error);
     throw new Error(`Failed to extract metadata: ${error.message}`);
   }
-}
+};
 
 const validateFileCreationTime = (fileMetadata, eventStart, eventEnd, config = DEFAULT_VALIDATION_CONFIG) => {
   const createdAt = fileMetadata.createdAt;
