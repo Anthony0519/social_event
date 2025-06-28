@@ -109,6 +109,7 @@ const extractFileMetadata = async (file, config = DEFAULT_VALIDATION_CONFIG) => 
   let fileData = file.data;
   let originalSize = file.size;
   let wasCompressed = false;
+  
 
   // Check if file size
   if (file.size > config.maxFileSizeInMB * 1024 * 1024) {
